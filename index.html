@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Creador de adjuntos · Love Shack</title>
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; font-family: Arial, Helvetica, sans-serif; background: #f4f7fb; color: #17212b; }
+      main { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 48px 0 64px; }
+      .eyebrow { margin: 0 0 10px; color: #1a73e8; font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+      h1 { margin: 0; font-size: clamp(30px, 5vw, 48px); letter-spacing: -1.5px; }
+      .intro { max-width: 690px; margin: 14px 0 32px; color: #5f6a76; font-size: 18px; line-height: 1.5; }
+      .workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 24px; align-items: start; }
+      .panel { background: #fff; border: 1px solid #dce3eb; border-radius: 20px; padding: 28px; box-shadow: 0 10px 28px rgba(31, 54, 79, .06); }
+      label { display: block; margin-bottom: 9px; color: #34414e; font-size: 14px; font-weight: 700; }
+      input { width: 100%; min-height: 48px; border: 1px solid #bfcbd8; border-radius: 10px; padding: 12px 14px; font: inherit; color: #17212b; }
+      input:focus { outline: 3px solid rgba(26, 115, 232, .18); border-color: #1a73e8; }
+      .help { margin: 10px 0 0; color: #657382; font-size: 13px; line-height: 1.45; }
+      button { appearance: none; border: 0; border-radius: 999px; padding: 13px 20px; margin-top: 18px; background: #1a73e8; color: #fff; cursor: pointer; font: inherit; font-weight: 700; }
+      button:hover { background: #155fbd; }
+      button:disabled { cursor: wait; opacity: .65; }
+      .status { min-height: 22px; margin: 14px 0 0; color: #657382; font-size: 14px; }
+      .status.error { color: #b42318; }
+      .preview-wrap { overflow: auto; padding: 18px; border: 1px dashed #c9d5e1; border-radius: 14px; background: #f8fafc; }
+      .email-preview { width: 600px; max-width: 600px; background-color: #eef2f6; border-radius: 20px; }
+      .empty { padding: 40px 20px; color: #657382; text-align: center; }
+      .code-head { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-top: 24px; }
+      h2 { margin: 0; font-size: 18px; }
+      .copy { margin-top: 0; padding: 9px 15px; font-size: 14px; }
+      textarea { width: 100%; height: 290px; margin-top: 12px; resize: vertical; border: 1px solid #dce3eb; border-radius: 12px; padding: 14px; background: #101820; color: #e8f0f8; font: 12px/1.45 SFMono-Regular, Consolas, "Liberation Mono", monospace; }
+      .note { margin: 24px 0 0; color: #657382; font-size: 13px; line-height: 1.5; }
+      @media (max-width: 800px) { main { padding-top: 32px; } .workspace { grid-template-columns: 1fr; } .panel { padding: 22px; } }
+      @media (max-width: 640px) { .email-preview { transform-origin: top left; } .preview-wrap { padding: 12px; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">Love Shack · Herramientas internas</p>
+      <h1>Creador de adjuntos de Drive</h1>
+      <p class="intro">Pega un enlace de Google Drive y obtén una tarjeta de correo lista para copiar. Detecta archivos y carpetas, incluidos los catálogos en español e inglés.</p>
+
+      <div class="workspace">
+        <section class="panel">
+          <label for="drive-url">Enlace de Google Drive</label>
+          <input id="drive-url" type="url" placeholder="https://drive.google.com/..." autocomplete="url" />
+          <p class="help">El archivo o carpeta debe estar configurado en Drive como “Cualquier persona con el enlace puede ver”.</p>
+          <button id="generate" type="button">Crear tarjeta</button>
+          <p id="status" class="status" aria-live="polite"></p>
+        </section>
+
+        <section class="panel">
+          <div id="preview" class="preview-wrap" aria-live="polite">
+            <div class="empty">La vista previa aparecerá aquí.</div>
+          </div>
+          <div class="code-head">
+            <h2>HTML para el correo</h2>
+            <button id="copy" class="copy" type="button" disabled>Copiar HTML</button>
+          </div>
+          <textarea id="html-output" readonly spellcheck="false" aria-label="HTML generado"></textarea>
+        </section>
+      </div>
+
+      <p class="note">La tarjeta mantiene el archivo en Drive: no adjunta ni copia documentos al correo. El servicio solo consulta los metadatos necesarios para crearla.</p>
+    </main>
+
+    <script>
+      const urlInput = document.querySelector('#drive-url');
+      const generateButton = document.querySelector('#generate');
+      const copyButton = document.querySelector('#copy');
+      const output = document.querySelector('#html-output');
+      const preview = document.querySelector('#preview');
+      const status = document.querySelector('#status');
+
+      const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
+
+      function buildCard(file) {
+        const safeName = escapeHtml(file.name);
+        const safeUrl = escapeHtml(file.url);
+        const isFolder = file.kind === 'folder';
+        const icon = isFolder
+          ? 'https://www.gstatic.com/images/branding/product/2x/drive_2020q4_48dp.png'
+          : 'https://ivanndlezz.github.io/digital-stuff/icons/brands/drive/pdf-drive-file.png';
+        const alt = isFolder ? 'Carpeta de Google Drive' : 'Archivo de Google Drive';
+        const meta = isFolder ? 'Carpeta de Drive' : file.size;
+        const button = isFolder ? 'Ver carpeta' : 'Ver en Drive';
+
+        return `<!-- Tarjeta de Google Drive -->
+<table role="presentation" class="email-container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background-color:#eef2f6; border-radius:20px;">
+  <tr>
+    <td class="card-padding" style="padding:22px 28px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td width="48" valign="middle" style="width:48px; padding-right:20px;">
+            <img src="${icon}" width="48" height="48" alt="${alt}" style="display:block; width:48px; height:48px;">
+          </td>
+          <td valign="top">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td valign="top" style="font-family:Arial, Helvetica, sans-serif; font-size:20px; font-weight:bold; color:#1a1a1a; line-height:1.2; padding-bottom:6px;">${safeName}</td>
+                <td valign="top" align="right" style="font-family:Arial, Helvetica, sans-serif; font-size:14px; font-weight:500; color:#5f6a76; white-space:nowrap; padding-bottom:6px; padding-left:12px; padding-top:3px;">${meta}</td>
+              </tr>
+              <tr>
+                <td colspan="2" style="font-family:Arial, Helvetica, sans-serif; font-size:15px; color:#5f6a76; line-height:1.4; padding-bottom:14px; word-break:break-all;">
+                  <a href="${safeUrl}" style="color:#5f6a76; text-decoration:none;">${safeUrl}</a>
+                </td>
+              </tr>
+              <tr>
+                <td colspan="2" align="right">
+                  <!--[if mso]>
+                  <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="${safeUrl}" style="height:36px;v-text-anchor:middle;width:150px;" arcsize="50%" strokecolor="#1a73e8" fillcolor="#1a73e8">
+                    <w:anchorlock/><center style="color:#ffffff;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">${button}</center>
+                  </v:roundrect>
+                  <![endif]-->
+                  <!--[if !mso]><!-->
+                  <a href="${safeUrl}" style="background-color:#1a73e8; border-radius:999px; color:#ffffff; display:inline-block; font-family:Arial, Helvetica, sans-serif; font-size:14px; font-weight:bold; line-height:36px; text-align:center; text-decoration:none; width:150px; -webkit-text-size-adjust:none;">${button}</a>
+                  <!--<![endif]-->
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+<!-- Fin tarjeta -->`;
+      }
+
+      function showPreview(html) {
+        const documentPreview = new DOMParser().parseFromString(html, 'text/html');
+        preview.replaceChildren(documentPreview.body.firstElementChild.cloneNode(true));
+      }
+
+      async function generate() {
+        const url = urlInput.value.trim();
+        if (!url) {
+          status.textContent = 'Pega primero un enlace de Google Drive.';
+          status.className = 'status error';
+          urlInput.focus();
+          return;
+        }
+
+        generateButton.disabled = true;
+        status.textContent = 'Leyendo los datos de Drive…';
+        status.className = 'status';
+        try {
+          const response = await fetch(`api/drive-metadata.php?url=${encodeURIComponent(url)}`);
+          const contentType = response.headers.get('content-type') || '';
+          if (!contentType.includes('application/json')) {
+            throw new Error('El servicio de Drive no está disponible todavía. Confirma que el archivo PHP esté activo en el servidor.');
+          }
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || 'No fue posible leer este enlace.');
+          const html = buildCard(result);
+          output.value = html;
+          showPreview(html);
+          copyButton.disabled = false;
+          status.textContent = 'Tarjeta lista para copiar.';
+        } catch (error) {
+          status.textContent = error.message;
+          status.className = 'status error';
+        } finally {
+          generateButton.disabled = false;
+        }
+      }
+
+      generateButton.addEventListener('click', generate);
+      urlInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') generate(); });
+      copyButton.addEventListener('click', async () => {
+        await navigator.clipboard.writeText(output.value);
+        copyButton.textContent = '¡Copiado!';
+        setTimeout(() => { copyButton.textContent = 'Copiar HTML'; }, 1800);
+      });
+    </script>
+  </body>
+</html>
